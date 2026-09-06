@@ -3420,3 +3420,12 @@
 
 // Disable servo with M282 to reduce power consumption, noise, and heat when not in use
 //#define SERVO_DETACH_GCODE
+
+// @section [kae] Custom Behaviors
+
+/**
+ * Base64 export of selected files on the SD card
+ */
+
+// Allow reading arbitrary files from the SD card using G-code
+#define KAE_SD_BINARY_BASE64_DOWNLOAD

@@ -1098,6 +1098,10 @@ void GcodeSuite::process_parsed_command(const bool no_ok/*=false*/) {
         case 3426: M3426(); break;                                // M3426: Read MCP3426 ADC (over i2c)
       #endif
 
+      #if ENABLED(KAE_SD_BINARY_BASE64_DOWNLOAD)
+        case 6400: M6400(); break;                                // M6400: Read B64 file from SD card
+      #endif
+
       default: parser.unknown_command_warning(); break;
     }
     break;

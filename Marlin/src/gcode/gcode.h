@@ -1259,6 +1259,10 @@ private:
 
   static void T(const int8_t tool_index);
 
+  #if ENABLED(KAE_SD_BINARY_BASE64_DOWNLOAD)
+    static void M6400();
+  #endif
+
 };
 
 extern GcodeSuite gcode;

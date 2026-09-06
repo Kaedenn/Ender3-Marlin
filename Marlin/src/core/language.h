@@ -90,9 +90,9 @@
 
 #define MARLIN_WEBSITE_URL "marlinfw.org"
 
-//#if !defined(STRING_SPLASH_LINE3) && defined(WEBSITE_URL)
-//  #define STRING_SPLASH_LINE3 WEBSITE_URL
-//#endif
+#if !defined(STRING_SPLASH_LINE3)
+  #define STRING_SPLASH_LINE3 __DATE__ " " __TIME__
+#endif
 
 //
 // Common Serial Console Messages
@@ -610,3 +610,16 @@
          DISPLAY_CHARSET_ISO10646_SK)
   #define DISPLAY_CHARSET_ISO10646_1 // use the better font on full graphic displays.
 #endif
+
+/* Language constants for M6400 */
+#define STR_B64_ERR_NOFILE "M6400 requires a filename argument"
+#define STR_B64_ERR_PRINTING "SD print already in progress"
+#define STR_B64_ERR_FILEOPEN "SD file is already open"
+#define STR_B64_ERR_NOENT "Could not find the file specified"
+#define STR_B64_ERR_OPEN_FAIL "Failed to open file"
+#define STR_B64_ERR_READ_FAIL "SD read failed"
+#define STR_B64_ERR_OVERRUN "Base64 encode failed; buffer overrun"
+#define STR_B64_BEGIN "B64_BEGIN"
+#define STR_B64_DATA "B64_DATA"
+#define STR_B64_END "B64_END"
+#define STR_B64_FAILURE "B64_FAILURE"
