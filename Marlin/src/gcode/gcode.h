@@ -1261,6 +1261,7 @@ private:
 
   #if ENABLED(KAE_SD_BINARY_BASE64_DOWNLOAD)
     static void M6400();
+    static void M6401();
   #endif
 
 };

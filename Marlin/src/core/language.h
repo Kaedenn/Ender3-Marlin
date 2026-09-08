@@ -612,6 +612,7 @@
 #endif
 
 /* Language constants for M6400 */
+#define STR_B64_ERR_PARSE_FAIL "Failed to parse arguments"
 #define STR_B64_ERR_NOFILE "M6400 requires a filename argument"
 #define STR_B64_ERR_PRINTING "SD print already in progress"
 #define STR_B64_ERR_FILEOPEN "SD file is already open"

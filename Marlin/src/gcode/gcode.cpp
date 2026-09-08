@@ -1100,6 +1100,7 @@ void GcodeSuite::process_parsed_command(const bool no_ok/*=false*/) {
 
       #if ENABLED(KAE_SD_BINARY_BASE64_DOWNLOAD)
         case 6400: M6400(); break;                                // M6400: Read B64 file from SD card
+        case 6401: M6401(); break;                                // M6401: List binary files on SD card
       #endif
 
       default: parser.unknown_command_warning(); break;
