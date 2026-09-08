@@ -107,4 +107,6 @@ fi
 # Copy the new firmware.
 cp -v -- "$src" "$TARGET/$fwname"
 
+echo "$src" >> "$PIO_BUILD/deploy.log"
+
 # vim: set ts=4 sts=4 sw=4:
