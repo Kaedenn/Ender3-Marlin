@@ -26,6 +26,7 @@
 
 #include "../gcode.h"
 #include "../../sd/cardreader.h"
+#include "../../libs/hex_print.h"
 #include "../../MarlinCore.h"
 
 #define MAX_FILE_LENGTH 80
@@ -39,13 +40,15 @@ struct M6400Config {
   char filename[MAX_FILE_LENGTH];
 };
 
-static bool emit_text(const uint8_t*, const int16_t, const M6400Config&);
+static bool emitText(const uint8_t*, const int16_t, const M6400Config&);
 
-static bool parse_M6400_args(GCodeParser &parser, M6400Config &config);
+static bool parseM6400Args(GCodeParser &parser, M6400Config &config);
 
-static int16_t kae_base64_encode(const uint8_t*, uint16_t, char*, uint16_t);
+static int16_t base64Encode(const uint8_t*, uint16_t, char*, uint16_t);
 
 static char *createFilename(char * const buffer, const dir_t &p);
+
+static bool printDirectoryListing(MediaFile& parent, char* prefix, size_t capacity);
 
 void GcodeSuite::M6400() {
   if (!card.isMounted()) {
@@ -65,7 +68,7 @@ void GcodeSuite::M6400() {
     SERIAL_ERROR_MSG(STR_B64_ERR_NOFILE);
     return;
   }
-  if (!parse_M6400_args(parser, config)) {
+  if (!parseM6400Args(parser, config)) {
     SERIAL_ERROR_MSG(STR_B64_ERR_PARSE_FAIL);
     return;
   }
@@ -99,6 +102,7 @@ void GcodeSuite::M6400() {
 
   uint8_t input[48];
   bool failure = false;
+  bool first_line = true;
 
   uint16_t input_length = 0;
 
@@ -116,7 +120,13 @@ void GcodeSuite::M6400() {
     input_length += bytes_read;
 
     if (input_length == sizeof(input) || (bytes_read == 0 && input_length > 0)) {
-      if (!emit_text(input, input_length, config)) {
+      /* emitText only emits the prefix on newline; emit the first one here */
+      if (config.mode == M6400Config::TEXT && config.prefixed && first_line) {
+        SERIAL_ECHOPGM(STR_B64_DATA);
+        SERIAL_CHAR(' ');
+        first_line = false;
+      }
+      if (!emitText(input, input_length, config)) {
         failure = true;
         break;
       }
@@ -139,6 +149,36 @@ void GcodeSuite::M6400() {
   file.close();
 }
 
+static void printAttributes(const dir_t& p) {
+  SERIAL_ECHO("Attributes: ");
+  print_hex_byte(p.attributes);
+  SERIAL_CHAR(' ');
+
+  if (p.name[0] == DIR_NAME_0xE5)
+    SERIAL_ECHO("DIR_NAME_0xE5 ");
+  if (p.name[0] == DIR_NAME_DELETED)
+    SERIAL_ECHO("DIR_NAME_DELETED ");
+  if (p.name[0] == DIR_NAME_FREE)
+    SERIAL_ECHO("DIR_NAME_FREE ");
+  if ((p.attributes & DIR_ATT_READ_ONLY) == DIR_ATT_READ_ONLY)
+    SERIAL_ECHO("DIR_ATT_READ_ONLY ");
+  if ((p.attributes & DIR_ATT_HIDDEN) == DIR_ATT_HIDDEN)
+    SERIAL_ECHO("DIR_ATT_HIDDEN ");
+  if ((p.attributes & DIR_ATT_SYSTEM) == DIR_ATT_SYSTEM)
+    SERIAL_ECHO("DIR_ATT_SYSTEM ");
+  if ((p.attributes & DIR_ATT_VOLUME_ID) == DIR_ATT_VOLUME_ID)
+    SERIAL_ECHO("DIR_ATT_VOLUME_ID ");
+  if ((p.attributes & DIR_ATT_DIRECTORY) == DIR_ATT_DIRECTORY)
+    SERIAL_ECHO("DIR_ATT_DIRECTORY ");
+  if ((p.attributes & DIR_ATT_ARCHIVE) == DIR_ATT_ARCHIVE)
+    SERIAL_ECHO("DIR_ATT_ARCHIVE ");
+  if (DIR_IS_LONG_NAME(&p))
+    SERIAL_ECHO("DIR_ATT_LONG_NAME ");
+
+  SERIAL_ECHO("Size: ");
+  SERIAL_ECHOLN(p.fileSize);
+}
+
 void GcodeSuite::M6401() {
   if (!card.isMounted()) {
     SERIAL_ECHO_MSG(STR_NO_MEDIA);
@@ -152,57 +192,16 @@ void GcodeSuite::M6401() {
 
   MediaFile parent = CardReader::getroot();
   SERIAL_ECHOLNPGM(STR_BEGIN_FILE_LIST);
-  dir_t p;
-  char longFilename[LONG_FILENAME_LENGTH] = {0};
-  char shortFilename[FILENAME_LENGTH] = {0};
-  while (parent.readDir(&p, longFilename)) {
-    SERIAL_ECHO(createFilename(shortFilename, p));
-    SERIAL_CHAR(' ');
-    if (longFilename[0]) {
-      SERIAL_ECHO(longFilename);
-      SERIAL_CHAR(' ');
-    }
-    SERIAL_ECHO("Attributes: 0x");
-    SERIAL_ECHO(p.attributes);
-    SERIAL_CHAR(' ');
-
-    if (p.name[0] == DIR_NAME_0xE5)
-      SERIAL_ECHO("DIR_NAME_0xE5 ");
-    if (p.name[0] == DIR_NAME_DELETED)
-      SERIAL_ECHO("DIR_NAME_DELETED ");
-    if (p.name[0] == DIR_NAME_FREE)
-      SERIAL_ECHO("DIR_NAME_FREE ");
-    if ((p.attributes & DIR_ATT_READ_ONLY) == DIR_ATT_READ_ONLY)
-      SERIAL_ECHO("DIR_ATT_READ_ONLY ");
-    if ((p.attributes & DIR_ATT_HIDDEN) == DIR_ATT_HIDDEN)
-      SERIAL_ECHO("DIR_ATT_HIDDEN ");
-    if ((p.attributes & DIR_ATT_SYSTEM) == DIR_ATT_SYSTEM)
-      SERIAL_ECHO("DIR_ATT_SYSTEM ");
-    if ((p.attributes & DIR_ATT_VOLUME_ID) == DIR_ATT_VOLUME_ID)
-      SERIAL_ECHO("DIR_ATT_VOLUME_ID ");
-    if ((p.attributes & DIR_ATT_DIRECTORY) == DIR_ATT_DIRECTORY)
-      SERIAL_ECHO("DIR_ATT_DIRECTORY ");
-    if ((p.attributes & DIR_ATT_ARCHIVE) == DIR_ATT_ARCHIVE)
-      SERIAL_ECHO("DIR_ATT_ARCHIVE ");
-    if (DIR_IS_LONG_NAME(&p))
-      SERIAL_ECHO("DIR_ATT_LONG_NAME ");
-
-    SERIAL_ECHO("Size: ");
-    SERIAL_ECHOLN(p.fileSize);
-  }
+  char pathBuffer[MAXPATHNAMELENGTH] = {0};
+  printDirectoryListing(parent, pathBuffer, sizeof(pathBuffer));
   SERIAL_ECHOLNPGM(STR_END_FILE_LIST);
 }
 
-static bool emit_text(
+static bool emitText(
     const uint8_t* input,
     const int16_t input_length,
     const M6400Config &config)
 {
-  if (config.prefixed) {
-    SERIAL_ECHOPGM(STR_B64_DATA);
-    SERIAL_CHAR(' ');
-  }
-
   if (config.mode == M6400Config::TEXT) {
     for (int16_t i = 0; i < input_length; ++i) {
       SERIAL_CHAR(input[i]);
@@ -218,8 +217,13 @@ static bool emit_text(
     return true;
   }
 
+  if (config.prefixed) {
+    SERIAL_ECHOPGM(STR_B64_DATA);
+    SERIAL_CHAR(' ');
+  }
+
   char output[65] = {0};
-  const int16_t output_length = kae_base64_encode(
+  const int16_t output_length = base64Encode(
       input,
       input_length,
       output,
@@ -235,7 +239,7 @@ static bool emit_text(
   return true;
 }
 
-static bool parse_M6400_args(GCodeParser &parser, M6400Config &config) {
+static bool parseM6400Args(GCodeParser &parser, M6400Config &config) {
   char *p = parser.string_arg;
 
   if (!p)
@@ -286,7 +290,7 @@ static bool parse_M6400_args(GCodeParser &parser, M6400Config &config) {
   return have_filename;
 }
 
-static int16_t kae_base64_encode(
+static int16_t base64Encode(
     const uint8_t *raw,
     uint16_t nraw,
     char *output,
@@ -359,6 +363,63 @@ static char *createFilename(char * const buffer, const dir_t &p) {
   }
   *pos++ = '\0';
   return buffer;
+}
+
+static bool printDirectoryListing(MediaFile& parent, char* prefix, size_t capacity) {
+  char longFilename[LONG_FILENAME_LENGTH] = {0};
+  char shortFilename[FILENAME_LENGTH] = {0};
+  bool result = true;
+  dir_t p;
+  while (parent.readDir(&p, longFilename)) {
+    createFilename(shortFilename, p);
+    if (prefix && *prefix) {
+      SERIAL_ECHO(prefix);
+      SERIAL_CHAR('/');
+    }
+    if (longFilename[0]) {
+      SERIAL_ECHO(longFilename);
+      SERIAL_CHAR(' ');
+    }
+    SERIAL_CHAR('`');
+    SERIAL_ECHO(shortFilename);
+    SERIAL_CHAR('`');
+    SERIAL_CHAR(' ');
+    printAttributes(p);
+    if (DIR_IS_SUBDIR(&p)) {
+      const size_t currSize = strlen(prefix);
+      size_t needSize = currSize + strlen(longFilename) + 1;
+      char* preferredName = longFilename;
+      if (needSize >= capacity) {
+        needSize = currSize + strlen(shortFilename) + 1;
+        preferredName = shortFilename;
+      }
+      if (needSize >= capacity) {
+        SERIAL_ERROR_START();
+        SERIAL_ECHO("Buffer overrun listing file ");
+        SERIAL_ECHO(longFilename);
+        SERIAL_ECHO(" aka ");
+        SERIAL_ECHO(shortFilename);
+        SERIAL_ECHO(" within directory ");
+        SERIAL_ECHO(prefix);
+        /* Skip over this problematic entry and defer failure */
+        result = false;
+        continue;
+      }
+      strncat(prefix, preferredName, capacity - currSize);
+      strcat(prefix, "/");
+      MediaFile child;
+      if (child.open(&parent, shortFilename, O_READ)) {
+        if (!printDirectoryListing(child, prefix, capacity)) {
+          result = false;
+        }
+      } else {
+        SERIAL_ECHO_MSG(STR_SD_CANT_OPEN_SUBDIR, preferredName);
+        result = false;
+      }
+    }
+    idle();
+  }
+  return result;
 }
 
 

@@ -1031,7 +1031,9 @@
 //
 // Add the G35 command to read bed corners to help adjust screws. Requires a bed probe.
 //
+#if !MB(SIMULATED)
 #define ASSISTED_TRAMMING
+#endif
 #if ENABLED(ASSISTED_TRAMMING)
 
   // Define from 3 to 9 points to probe.
@@ -4264,7 +4266,9 @@
  * When running in the debugger it will break for debugging. This is useful to help understand
  * a crash from a remote location. Requires ~400 bytes of SRAM and 5Kb of flash.
  */
+#if !MB(SIMULATED)
 #define POSTMORTEM_DEBUGGING
+#endif
 
 /**
  * Software Reset options

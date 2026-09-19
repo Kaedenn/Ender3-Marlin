@@ -4,6 +4,7 @@ set -euo pipefail
 
 PIO_BUILD="${PIO_BUILD:-.pio/build/STM32F103RE_creality}"
 TARGET="${TARGET:-/media/kaedenn/1E21-CFAA}"
+ARTFIACT_DIR=build-output
 
 if [[ ! -d "$TARGET" ]]; then
   echo "ERROR: Printer's SD Card not present" >&2
@@ -107,6 +108,6 @@ fi
 # Copy the new firmware.
 cp -v -- "$src" "$TARGET/$fwname"
 
-echo "$src" >> "$PIO_BUILD/deploy.log"
+echo "$src" >> "$ARTFIACT_DIR/deploy.log"
 
 # vim: set ts=4 sts=4 sw=4:
