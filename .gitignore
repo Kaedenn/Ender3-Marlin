@@ -31,6 +31,8 @@ out-language/
 *.gen
 *.sublime-workspace
 build-output/
+Configuration.M
+compile_commands.json
 
 # OS
 applet/
