@@ -13,7 +13,8 @@ logging.basicConfig(format="%(module)s:%(lineno)s: %(levelname)s: %(message)s",
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-PACKAGES = "/home/kaedenn/.platformio/packages"
+PACKAGES = os.path.expanduser("~/.platformio/packages")
+REPO_DIR = os.path.dirname(__file__)
 # pylint: disable=line-too-long
 CLARGS = [
   "-c",
@@ -63,7 +64,7 @@ CLARGS = [
   "-DHAL_UART_MODULE_ENABLED",
   "-DHAL_PCD_MODULE_ENABLED",
   "-IMarlin",
-  "-I.",
+  f"-I{REPO_DIR}",
   f"-I{PACKAGES}/framework-arduinoststm32/libraries/Servo/src",
   f"-I{PACKAGES}/framework-arduinoststm32/libraries/SoftwareSerial/src",
   f"-I{PACKAGES}/framework-arduinoststm32/libraries/EEPROM/src",
@@ -99,7 +100,7 @@ CLARGS = [
 
 def gen_command(srcfile, destfile, *extra_args):
   "Generate a final command suitable for compiling srcfile into destfile"
-  args = ["/home/kaedenn/.platformio/packages/toolchain-gccarmnoneeabi/bin/arm-none-eabi-g++"]
+  args = [f"{PACKAGES}/toolchain-gccarmnoneeabi/bin/arm-none-eabi-g++"]
   args.extend(CLARGS)
   args.append(srcfile)
   args.extend(("-o", destfile))
@@ -111,6 +112,13 @@ def gen_command(srcfile, destfile, *extra_args):
         len(args) - len(set(args)),
         dupes)
   return args
+
+def compile_program(srcfile, destfile, *clargs):
+  "Compile srcfile to destfile"
+  command = gen_command(srcfile, destfile, *clargs)
+  logger.info("Compiling %s to %s using %s", srcfile, destfile, command[0])
+  subprocess.check_call(command)
+  logger.info("Wrote %d lines to %s", count_lines(destfile), destfile)
 
 def matches_any(srcline, dstlines, invert=False):
   "Does the source line match any of the lines in dstlines?"
@@ -128,17 +136,40 @@ def sanitize_macro(line):
     line = line[:line.index("/*")].strip()
   return line
 
+def read_file_sanitized(*filepaths):
+  "Read lines from each file, sanitizing all macros"
+  results = []
+  seen = set()
+  purged = 0
+  for filepath in filepaths:
+    with open(filepath, "rt", encoding="UTF-8") as fobj:
+      for line_full in fobj:
+        line = sanitize_macro(line_full.strip())
+        if line in seen:
+          continue
+        if line.startswith("#define") and line not in seen:
+          if line.split(None, 1)[-1].startswith("_"):
+            purged += 1
+            continue
+          results.append(line)
+          seen.add(line)
+  if purged > 0:
+    logger.debug("Purged %d total private macros", purged)
+  return deduplicate(results)
+
+def dump_lines(fname, lines, mode="wt"):
+  "Convenience function to write all of the lines to the file"
+  with open(fname, mode, encoding="UTF-8") as fobj:
+    fobj.write(os.linesep.join(lines))
+    fobj.write(os.linesep)
+  if len(lines) > 0:
+    logger.info("Wrote %d line%s to %s",
+        len(lines), "" if len(lines) == 1 else "s", fname)
+
 def count_lines(fname):
   "Count the number of lines in fname"
   with open(fname, "rt", encoding="UTF-8") as fobj:
     return len(fobj.read().splitlines())
-
-def compile_program(srcfile, destfile, *clargs):
-  "Compile srcfile to destfile"
-  command = gen_command(srcfile, destfile, *clargs)
-  logger.info("Compiling %s to %s using %s", srcfile, destfile, command[0])
-  subprocess.check_call(command)
-  logger.info("Wrote %d lines to %s", count_lines(destfile), destfile)
 
 def deduplicate(sequence):
   "Remove duplicates while preserving order"
@@ -164,55 +195,44 @@ def main():
   if args.verbose:
     logger.setLevel(logging.DEBUG)
 
+  # Paths to our various temporary files
   srcfile = "/tmp/genconf.c"
   basefile = "/tmp/genconf-base.E"
   destfile = "/tmp/genconf.E"
-  with open(srcfile, "wt", encoding="UTF-8") as fobj:
-    fobj.write(os.linesep)
+
+  # Generate list of macros defined by the compiler itself
+  dump_lines(srcfile, [])
   compile_program(srcfile, basefile)
-  with open(srcfile, "wt", encoding="UTF-8") as fobj:
-    fobj.write('#include "Marlin/src/inc/MarlinConfig.h"\n')
+
+  # Generate list of macros defined during compilation
+  dump_lines(srcfile, ['#include "Marlin/src/inc/MarlinConfig.h"'])
   compile_program(srcfile, destfile)
 
-  sanitized_base = []
-  sanitized_dest = []
-  sanitized_ref = []
-  with open(basefile, "rt", encoding="UTF-8") as fobj:
-    for line in fobj.read().splitlines():
-      sanitized_base.append(sanitize_macro(line))
-  with open(destfile, "rt", encoding="UTF-8") as fobj:
-    for line in fobj.read().splitlines():
-      sanitized_dest.append(sanitize_macro(line))
-  for conffile in ["Marlin/Configuration.h", "Marlin/Configuration_adv.h"]:
-    with open(conffile, "rt", encoding="UTF-8") as fobj:
-      for line in fobj.read().splitlines():
-        if line.lstrip().startswith("#define"):
-          sanitized_ref.append(sanitize_macro(line))
-  sanitized_ref = deduplicate(sanitized_ref)
+  # Preprocess each file: remove comments, strip lines, deduplicate
+  sanitized_base = read_file_sanitized(basefile)
+  sanitized_dest = read_file_sanitized(destfile)
+  sanitized_ref = read_file_sanitized("Marlin/Configuration.h", "Marlin/Configuration_adv.h")
 
   if args.gen_debug:
-    with open("genconf-base-debug.E", "wt", encoding="UTF-8") as fobj:
-      fobj.write(os.linesep.join(sanitized_base))
-      fobj.write(os.linesep)
-    with open("genconf-debug.E", "wt", encoding="UTF-8") as fobj:
-      fobj.write(os.linesep.join(sanitized_dest))
-      fobj.write(os.linesep)
-    with open("genconf-ref-debug.E", "wt", encoding="UTF-8") as fobj:
-      fobj.write(os.linesep.join(sanitized_ref))
-      fobj.write(os.linesep)
-    logger.info("Generated genconf-base-debug.E, genconf-debug.E, and genconf-ref-debug.E")
+    # Save the three lists to files for later review
+    dump_lines("genconf-base-debug.E", sanitized_base)
+    dump_lines("genconf-debug.E", sanitized_dest)
+    dump_lines("genconf-ref-debug.E", sanitized_ref)
 
+  # Remove all macros not defined in either of the configuration files
   logger.debug("Removing macros not defined via configuration headers...")
   config_macros = []
   for line in sanitized_ref:
-    if any(line in srcline for srcline in sanitized_dest):
+    if any(srcline.startswith(line) for srcline in sanitized_dest):
       config_macros.append(line)
 
+  # Finally write the final list to the output file
   logger.info("Writing %d lines to %s", len(config_macros), args.output)
   with open(args.output, "wt", encoding="UTF-8") as fobj:
     fobj.write(os.linesep.join(config_macros))
     fobj.write(os.linesep)
 
+  # Cleanup
   if not args.keep:
     logger.info("Removing intermediate files")
     os.unlink(srcfile)

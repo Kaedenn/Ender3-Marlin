@@ -108,6 +108,6 @@ fi
 # Copy the new firmware.
 cp -v -- "$src" "$TARGET/$fwname"
 
-echo "$src" >> "$ARTFIACT_DIR/deploy.log"
+echo "$src $(date "+%Y-%m-%d %H-%M-%S")" >> "$ARTFIACT_DIR/deploy.log"
 
 # vim: set ts=4 sts=4 sw=4:
