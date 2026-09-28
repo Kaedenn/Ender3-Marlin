@@ -38,6 +38,9 @@ struct M6400Config {
     BASE64
   } mode;
   char filename[MAX_FILE_LENGTH];
+  // Signed storage preserves -1 while allowing every 32-bit memory address.
+  int64_t start_offset = -1; // S: Hex start address
+  int64_t end_offset = -1;   // E: Hex end address (exclusive), or S + L
 };
 
 static bool emitText(const uint8_t*, const int16_t, const M6400Config&);
@@ -50,18 +53,19 @@ static char *createFilename(char * const buffer, const dir_t &p);
 
 static bool printDirectoryListing(MediaFile& parent, char* prefix, size_t capacity);
 
-void GcodeSuite::M6400() {
-  if (!card.isMounted()) {
-    SERIAL_ECHO_MSG(STR_NO_MEDIA);
-    return;
-  }
+static void dumpM6400File(M6400Config &config);
 
+static void dumpM6400Memory(M6400Config &config);
+
+static constexpr uint16_t M6400_INPUT_SIZE = 48;
+
+void GcodeSuite::M6400() {
   if (IS_SD_PRINTING()) {
     SERIAL_ERROR_MSG(STR_B64_ERR_PRINTING);
     return;
   }
 
-  M6400Config config = {0};
+  M6400Config config = {};
   config.prefixed = true;
   config.mode = M6400Config::BASE64;
   if (!parser.string_arg || !*parser.string_arg) {
@@ -70,6 +74,52 @@ void GcodeSuite::M6400() {
   }
   if (!parseM6400Args(parser, config)) {
     SERIAL_ERROR_MSG(STR_B64_ERR_PARSE_FAIL);
+    return;
+  }
+
+  if (config.start_offset != -1)
+    dumpM6400Memory(config);
+  else
+    dumpM6400File(config);
+}
+
+static void printM6400Begin(const char *filename, const uint32_t size) {
+  SERIAL_ECHOPGM(STR_B64_BEGIN);
+  SERIAL_CHAR(' ');
+  SERIAL_ECHO(filename);
+  SERIAL_CHAR(' ');
+  SERIAL_ECHOLN(size);
+}
+
+static void dumpM6400Memory(M6400Config &config) {
+#if MB(SIMULATED)
+  SERIAL_ERROR_MSG("Refusing to dump memory while simulated");
+#else
+  const uintptr_t start = static_cast<uintptr_t>(config.start_offset);
+  const uint32_t size = config.end_offset - config.start_offset;
+  const uint8_t * const memory = reinterpret_cast<const uint8_t *>(start);
+
+  config.mode = M6400Config::BASE64;
+  printM6400Begin(config.filename, size);
+
+  for (uint32_t offset = 0; offset < size;) {
+    const uint16_t input_length = size - offset < M6400_INPUT_SIZE
+      ? size - offset : M6400_INPUT_SIZE;
+    if (!emitText(memory + offset, input_length, config)) {
+      SERIAL_ECHOLNPGM(STR_B64_FAILURE);
+      return;
+    }
+    offset += input_length;
+    idle();
+  }
+
+  SERIAL_ECHOLNPGM(STR_B64_END);
+#endif
+}
+
+static void dumpM6400File(M6400Config &config) {
+  if (!card.isMounted()) {
+    SERIAL_ECHO_MSG(STR_NO_MEDIA);
     return;
   }
 
@@ -94,13 +144,9 @@ void GcodeSuite::M6400() {
     return;
   }
 
-  SERIAL_ECHOPGM(STR_B64_BEGIN);
-  SERIAL_CHAR(' ');
-  SERIAL_ECHO(config.filename);
-  SERIAL_CHAR(' ');
-  SERIAL_ECHOLN(file.fileSize());
+  printM6400Begin(config.filename, file.fileSize());
 
-  uint8_t input[48];
+  uint8_t input[M6400_INPUT_SIZE];
   bool failure = false;
   bool first_line = true;
 
@@ -248,6 +294,7 @@ static bool parseM6400Args(GCodeParser &parser, M6400Config &config) {
   bool seen_a = false;
   bool seen_r = false;
   bool have_filename = false;
+  int64_t length = -1;
 
   while (*p) {
     while (*p && isspace((unsigned char)*p))
@@ -283,9 +330,62 @@ static bool parseM6400Args(GCodeParser &parser, M6400Config &config) {
       }
     }
 
+    if (token[0] == 'S' || token[0] == 'E' || token[0] == 'L') {
+      const char *digits = token + 1;
+      if (digits[0] == '0' && (digits[1] == 'x' || digits[1] == 'X'))
+        digits += 2;
+
+      if (!*digits)
+        return false;
+
+      const char *end = digits;
+      while (isxdigit((unsigned char)*end)) ++end;
+
+      // Only hexadecimal tokens are arguments; retain filenames like Ender.gcode.
+      if (!*end) {
+        uint32_t value = 0;
+        for (const char *digit = digits; digit < end; ++digit) {
+          const uint8_t nibble = *digit <= '9' ? *digit - '0'
+            : (*digit | 0x20) - 'a' + 10;
+          if (value > (UINT32_MAX - nibble) / 16)
+            return false;
+          value = value * 16 + nibble;
+        }
+
+        switch (token[0]) {
+          case 'S':
+            if (config.start_offset != -1) return false;
+            config.start_offset = value;
+            break;
+          case 'E':
+            if (config.end_offset != -1 || length != -1) return false;
+            config.end_offset = value;
+            break;
+          case 'L':
+            if (length != -1 || config.end_offset != -1) return false;
+            length = value;
+            break;
+        }
+        continue;
+      }
+    }
+
     snprintf(config.filename, MAX_FILE_LENGTH, "%s", token);
     have_filename = true;
   }
+
+  if (length != -1) {
+    if (config.start_offset == -1 || length > UINT32_MAX - config.start_offset)
+      return false;
+    config.end_offset = config.start_offset + length;
+  }
+
+  // Memory dumps require both bounds; no offsets selects an SD file.
+  if ((config.start_offset == -1) != (config.end_offset == -1))
+    return false;
+
+  if (config.end_offset < config.start_offset)
+    return false;
 
   return have_filename;
 }
