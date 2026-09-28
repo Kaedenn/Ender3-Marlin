@@ -38,9 +38,11 @@ struct M6400Config {
     BASE64
   } mode;
   char filename[MAX_FILE_LENGTH];
+#if ENABLED(KAE_SD_BINARY_BASE64_MEMORY_DUMP_ENABLED)
   // Signed storage preserves -1 while allowing every 32-bit memory address.
   int64_t start_offset = -1; // S: Hex start address
   int64_t end_offset = -1;   // E: Hex end address (exclusive), or S + L
+#endif
 };
 
 static bool emitText(const uint8_t*, const int16_t, const M6400Config&);
@@ -55,9 +57,17 @@ static bool printDirectoryListing(MediaFile& parent, char* prefix, size_t capaci
 
 static void dumpM6400File(M6400Config &config);
 
+#if ENABLED(KAE_SD_BINARY_BASE64_MEMORY_DUMP_ENABLED)
 static void dumpM6400Memory(M6400Config &config);
+#endif
 
 static constexpr uint16_t M6400_INPUT_SIZE = 48;
+static constexpr uint16_t M6400_OUTPUT_SIZE = 65;
+
+template <typename T, typename U>
+T minimum(const T& left, const U& right) {
+  return left < (T)right ? left : (T)right;
+}
 
 void GcodeSuite::M6400() {
   if (IS_SD_PRINTING()) {
@@ -77,9 +87,11 @@ void GcodeSuite::M6400() {
     return;
   }
 
+#if ENABLED(KAE_SD_BINARY_BASE64_MEMORY_DUMP_ENABLED)
   if (config.start_offset != -1)
     dumpM6400Memory(config);
   else
+#endif
     dumpM6400File(config);
 }
 
@@ -91,6 +103,7 @@ static void printM6400Begin(const char *filename, const uint32_t size) {
   SERIAL_ECHOLN(size);
 }
 
+#if ENABLED(KAE_SD_BINARY_BASE64_MEMORY_DUMP_ENABLED)
 static void dumpM6400Memory(M6400Config &config) {
 #if MB(SIMULATED)
   SERIAL_ERROR_MSG("Refusing to dump memory while simulated");
@@ -103,8 +116,7 @@ static void dumpM6400Memory(M6400Config &config) {
   printM6400Begin(config.filename, size);
 
   for (uint32_t offset = 0; offset < size;) {
-    const uint16_t input_length = size - offset < M6400_INPUT_SIZE
-      ? size - offset : M6400_INPUT_SIZE;
+    const uint16_t input_length = minimum(size - offset, M6400_INPUT_SIZE);
     if (!emitText(memory + offset, input_length, config)) {
       SERIAL_ECHOLNPGM(STR_B64_FAILURE);
       return;
@@ -116,6 +128,7 @@ static void dumpM6400Memory(M6400Config &config) {
   SERIAL_ECHOLNPGM(STR_B64_END);
 #endif
 }
+#endif
 
 static void dumpM6400File(M6400Config &config) {
   if (!card.isMounted()) {
@@ -268,7 +281,7 @@ static bool emitText(
     SERIAL_CHAR(' ');
   }
 
-  char output[65] = {0};
+  char output[M6400_OUTPUT_SIZE] = {0};
   const int16_t output_length = base64Encode(
       input,
       input_length,
@@ -294,7 +307,9 @@ static bool parseM6400Args(GCodeParser &parser, M6400Config &config) {
   bool seen_a = false;
   bool seen_r = false;
   bool have_filename = false;
+#if ENABLED(KAE_SD_BINARY_BASE64_MEMORY_DUMP_ENABLED)
   int64_t length = -1;
+#endif
 
   while (*p) {
     while (*p && isspace((unsigned char)*p))
@@ -330,6 +345,7 @@ static bool parseM6400Args(GCodeParser &parser, M6400Config &config) {
       }
     }
 
+#if ENABLED(KAE_SD_BINARY_BASE64_MEMORY_DUMP_ENABLED)
     if (token[0] == 'S' || token[0] == 'E' || token[0] == 'L') {
       const char *digits = token + 1;
       if (digits[0] == '0' && (digits[1] == 'x' || digits[1] == 'X'))
@@ -372,8 +388,10 @@ static bool parseM6400Args(GCodeParser &parser, M6400Config &config) {
 
     snprintf(config.filename, MAX_FILE_LENGTH, "%s", token);
     have_filename = true;
+#endif
   }
 
+#if ENABLED(KAE_SD_BINARY_BASE64_MEMORY_DUMP_ENABLED)
   if (length != -1) {
     if (config.start_offset == -1 || length > UINT32_MAX - config.start_offset)
       return false;
@@ -386,6 +404,7 @@ static bool parseM6400Args(GCodeParser &parser, M6400Config &config) {
 
   if (config.end_offset < config.start_offset)
     return false;
+#endif
 
   return have_filename;
 }

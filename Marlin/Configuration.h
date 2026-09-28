@@ -3439,3 +3439,7 @@
 
 // Allow reading arbitrary files from the SD card using G-code
 #define KAE_SD_BINARY_BASE64_DOWNLOAD
+
+// Allow using M6400 to read arbitrary memory locations (DANGEROUS!!!)
+//#define KAE_SD_BINARY_BASE64_MEMORY_DUMP_ENABLED
+
